@@ -1,6 +1,6 @@
 # Maximum Flow Algorithms - Interactive CLI & Benchmarking
 
-## 🚀 Quick Setup
+## Quick Setup
 
 ### Step 1: Install Dependencies
 ```bash
@@ -81,7 +81,7 @@ Result: Publication-ready plots saved to plots/
 
 ---
 
-## 📊 Method 2: Direct Benchmarking Scripts
+## Method 2: Direct Benchmarking Scripts
 
 ### Option A: Quick Visual Demo
 ```bash
@@ -158,23 +158,23 @@ python3 code/test_dataset_load.py
 - Road traffic network loading
 - Dataset format validation
 
-## 🔍 What Each Component Demonstrates
+## What Each Component Demonstrates
 
 | Component | Demonstrates | Visual Output | Benchmark Output |
 |-----------|--------------|---------------|------------------|
-| **CLI Option 1-2** | Graph visualization, flow visualization, min-cut | ✅ 3 matplotlib plots | - |
-| **CLI Option 3** | Single algorithm execution | ✅ Optional visualization | Runtime metrics |
-| **CLI Option 4** | All algorithms comparison | - | ✅ Comparison table + CSV |
-| **CLI Option 5** | Experiment runner | - | ✅ Multiple CSV files |
-| **CLI Option 6** | Results visualization | ✅ Publication plots | - |
-| **CLI Option 7** | VFOA network analysis | ✅ Heatmaps, comparisons | ✅ Batch results CSV |
-| **test_visualization.py** | Quick visual demo | ✅ 3 plots (graph/flow/cut) | - |
-| **run_all_experiments.py** | Comprehensive benchmarking | - | ✅ 8+ CSV files |
-| **plot_results.py** | Results visualization | ✅ Multiple plot types | - |
+| **CLI Option 1-2** | Graph visualization, flow visualization, min-cut | 3 matplotlib plots | - |
+| **CLI Option 3** | Single algorithm execution | Optional visualization | Runtime metrics |
+| **CLI Option 4** | All algorithms comparison | - | Comparison table + CSV |
+| **CLI Option 5** | Experiment runner | - | Multiple CSV files |
+| **CLI Option 6** | Results visualization | Publication plots | - |
+| **CLI Option 7** | VFOA network analysis | Heatmaps, comparisons | Batch results CSV |
+| **test_visualization.py** | Quick visual demo | 3 plots (graph/flow/cut) | - |
+| **run_all_experiments.py** | Comprehensive benchmarking | - | CSV files |
+| **plot_results.py** | Results visualization | Multiple plot types | - |
 
 ---
 
-## 📈 Expected Visual Outputs
+## Expected Visual Outputs
 
 ### From CLI Visualization Options:
 1. **Graph Structure Plot**
@@ -198,7 +198,7 @@ python3 code/test_dataset_load.py
 3. **Density Analysis** - Runtime vs. edge density
 4. **Algorithm Metrics** - Augmenting paths, relabels, etc.
 
-## ⚡ Quick Command Reference
+## Quick Command Reference
 
 ```bash
 # Most important commands for live demo:
