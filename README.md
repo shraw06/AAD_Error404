@@ -5,7 +5,7 @@
 
 ---
 
-## 📋 Table of Contents
+## Table of Contents
 
 1. [Project Overview](#project-overview)
 2. [Project Structure](#project-structure)
@@ -20,7 +20,7 @@
 
 ---
 
-## 📊 Project Overview
+## Project Overview
 
 This project provides a comprehensive implementation and analysis of **six maximum flow algorithms** with extensive benchmarking, visualization, and real-world applications. The project includes:
 
@@ -28,7 +28,7 @@ This project provides a comprehensive implementation and analysis of **six maxim
 2. **Bonus Part**: Image segmentation application using max-flow/min-cut and 3D vizualisation of Edmonds Karp and Cpacoty Scaling algorithms.
 ---
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 
@@ -63,7 +63,7 @@ This project provides a comprehensive implementation and analysis of **six maxim
 
 ---
 
-## 🌊 Main Project: MaxFlow Algorithms
+## Main Project: MaxFlow Algorithms
 
 ### Implemented Algorithms
 
@@ -163,7 +163,7 @@ Comprehensive performance analysis across multiple dimensions:
 
 ---
 
-## 🎨 Bonus Part: Image Segmentation
+## Bonus Part: Image Segmentation + Video animation + 3D Visualization
 
 **Location**: `AAD_final_project/bonus/`
 
@@ -188,7 +188,7 @@ Interactive Jupyter Notebook (`yellow.ipynb`) demonstrating **foreground/backgro
 
 ---
 
-## 🔧 Installation & Setup
+## Installation & Setup
 
 ### Prerequisites
 
@@ -236,7 +236,7 @@ python3 code/cli.py
 
 ---
 
-## 🚀 How to Run
+## How to Run
 
 ### Method 1: Interactive CLI (Recommended)
 
@@ -293,80 +293,7 @@ Or view the static HTML:
 # Open juku.html in any web browser
 ```
 
----
-
-## 🎬 Live Demo Instructions
-
-### For Evaluators: Demonstration Workflow
-
-#### Demo 1: Interactive CLI Tour (5 minutes)
-
-```bash
-cd maxflow-project
-python3 code/cli.py
-```
-
-**Suggested Demo Flow:**
-
-1. **Option 3**: Run Single Algorithm
-   - Choose "Sparse Graph" with n=20, edge_factor=3
-   - Select "Dinic" algorithm
-   - Show visualization option
-   - Results display with timing
-
-2. **Option 4**: Run All Algorithms
-   - Choose "Dense Graph" with n=15, density=0.3
-   - Watch all 6 algorithms execute
-   - Compare results in table
-   - Save to CSV
-
-3. **Option 7**: VFOA Network Explorer
-   - Select "4. Batch analyze all networks"
-   - Choose "Dinic" algorithm
-   - Watch progress bars for 24 networks
-   - View comparison table
-   - Show saved CSV in `results/`
-
-#### Demo 2: Benchmarking & Visualization (5 minutes)
-
-```bash
-# From maxflow-project directory
-
-# Run experiments (quick version)
-python3 code/cli.py
-# Select Option 5 → Choose experiment 1 (Size sweep)
-
-# Generate plots
-python3 code/cli.py
-# Select Option 6 → Choose a results file → Generate plots
-```
-
-**Show:**
-- CSV files in `results/` directory
-- Generated plots in `plots/` directory
-- Runtime scaling analysis
-
-#### Demo 3: Bonus - Image Segmentation (3 minutes)
-
-```bash
-cd bonus
-
-# Option 1: Show HTML (instant)
-# Open juku.html in browser
-
-# Option 2: Run notebook (if time permits)
-jupyter notebook yellow.ipynb
-```
-
-**Show:**
-- Input images with user markers
-- Segmentation process
-- Output results in `output_segmentations/`
-- Play demo video (link in `video_link.txt`)
-
----
-
-## ⚡ Features & Implementation
+## Features & Implementation
 
 ### Algorithm Implementations
 
@@ -432,7 +359,7 @@ VFOA networks contain timestamped attention data:
 
 ---
 
-## 📚 Documentation
+## Documentation
 
 Comprehensive documentation available in `maxflow-project/`:
 
@@ -447,31 +374,18 @@ Detailed comparison of:
 - Time complexity (theoretical and empirical)
 - Space complexity
 - Practical performance notes
-- When to use which algorithm
-- Worst-case vs. average-case behavior
 
 #### VFOA Guide (`NETWORK_DATASETS_GUIDE.md`)
 
 - Dataset format explanation
-- Temporal aggregation methodology
 - Visualization types
 - Batch processing instructions
-- Export formats
 
 ---
 
-### Manual Testing via CLI
-
-Use the interactive CLI to:
-- ✅ Test each algorithm individually
-- ✅ Compare algorithms on same graph
-- ✅ Verify correctness (all should give same max-flow)
-- ✅ Analyze performance across graph types
-- ✅ Validate visualizations
-
 ---
 
-## 📊 Expected Outputs
+##  Expected Outputs
 
 ### Results Directory (`results/`)
 
@@ -535,23 +449,10 @@ plots/
 
 ---
 
-## 📦 Deliverables Checklist
-
-- ✅ 6 Maximum flow algorithm implementations
-- ✅ Interactive CLI with 7 options
-- ✅ Comprehensive benchmarking suite
-- ✅ Real dataset analysis (email, road, VFOA)
-- ✅ VFOA network explorer with batch processing
-- ✅ Visualization capabilities (graphs, flows, stats)
-- ✅ Complexity analysis report
-- ✅ Extensive documentation (4+ guides)
-- ✅ Bonus: Image segmentation with max-flow
-- ✅ Video demonstration
-- ✅ Reproducible results in `results/` and `plots/`
 
 ---
 
-## 👥 Credits
+## Credits
 
 ### VFOA Dataset
 
@@ -567,36 +468,11 @@ plots/
 
 ---
 
-## 📞 Support & Questions
-
-### Running Issues?
-
-1. **Check Python version**: `python3 --version` (need 3.7+)
-2. **Install dependencies**: `pip install pandas numpy networkx matplotlib`
-3. **Activate virtual environment**: `source venv/bin/activate`
-4. **Check data extraction**: Ensure `data/comm-f2f-Resistance-network/` exists
-
-### Common Issues
-
-**"No VFOA networks found"**
-- Ensure `data/comm-f2f-Resistance-network/comm-f2f-Resistance/` directory exists
-- Check that `network/` subdirectory contains `.csv` files
-
-**"ModuleNotFoundError: pandas"**
-```bash
-pip install pandas numpy
-```
-
-**"Visualization requires networkx matplotlib"**
-```bash
-pip install networkx matplotlib
-```
-
 ---
 
-## 🎓 Academic Context
+## Academic Context
 
-This project was developed as part of an **Advanced Algorithms and Data Structures** course, demonstrating:
+This project was developed as part of an **Algorithms Analysis and Design** course, demonstrating:
 
 - Algorithm design and analysis
 - Performance benchmarking and empirical validation
@@ -610,13 +486,13 @@ This project was developed as part of an **Advanced Algorithms and Data Structur
 
 ---
 
-## 📄 License & Usage
+## License & Usage
 
 This project is submitted as academic coursework. Code implementations are based on standard algorithms from academic literature and textbooks.
 
 ---
 
-## 🚀 Quick Command Reference
+## Quick Command Reference
 
 ```bash
 # Main CLI
