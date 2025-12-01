@@ -1,0 +1,7 @@
+Algorithm,Flow,MeanTime,StdTime
+Ford-Fulkerson,8,0.0005319118499755859,
+Edmonds-Karp,8,0.00011491775512695312,
+Dinic,8,9.799003601074219e-05,
+Push-Relabel,5,8.869171142578125e-05,
+Capacity-Scaling,8,9.298324584960938e-05,
+Greedy-Fattest,8,0.0004208087921142578,
