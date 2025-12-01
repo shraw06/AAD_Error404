@@ -1,26 +1,13 @@
 Activate python environment - source venv/bin/activate
 
-## 🚀 Quick Start
+##  Quick Start
 
 ```bash
 python3 code/cli.py
 ```
 
-### Main Features:
-  1-6. Original functionality (graph generation, algorithms, experiments)
-  **NEW:** 7. VFOA Network Explorer (62 networks)
-
-### What's New?
-- **VFOA Analysis**: Explore 62 Visual Focus of Attention temporal networks
-- **Batch Processing**: Run max-flow on all networks with progress bars
-- **Rich Visualizations**: Heatmaps, attention matrices, statistical charts
-- **Network Comparison**: Compare multiple VFOA networks side-by-side
-
-📖 **See [QUICK_START.md](QUICK_START.md) for step-by-step guide**
-📚 **See [NETWORK_DATASETS_GUIDE.md](NETWORK_DATASETS_GUIDE.md) for full documentation**
-
 This is user interactive.
-We can also run a particular thing by - python3 code/test_visualization.py nd changing in code what all graph/ algo we want.
+We can also run a particular thing by - python3 code/test_visualization.py and changing in code what all graph/ algo we want.
 
 
 Visualize a Random Graph
