@@ -13,7 +13,6 @@
 4. [Bonus Part: Image Segmentation](#bonus-part-image-segmentation)
 5. [Installation & Setup](#installation--setup)
 6. [How to Run](#how-to-run)
-7. [Live Demo Instructions](#live-demo-instructions)
 8. [Features & Implementation](#features--implementation)
 9. [Documentation](#documentation)
 10. [Credits](#credits)
