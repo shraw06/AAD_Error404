@@ -1,0 +1,1094 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Max Flow Visualizer — Edmonds–Karp + Capacity Scaling</title>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    body,html{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#070712;font-family:"IBM Plex Sans",sans-serif}
+    #webgl-canvas{display:block;width:100%;height:100%}
+    #overlay{position:absolute;right:18px;top:18px;width:340px;padding:14px;border-radius:12px;background:rgba(12,12,18,0.6);color:#e6eef8;border:1px solid rgba(255,255,255,0.06);backdrop-filter:blur(6px)}
+    #overlay h1{margin:0 0 6px 0;font-size:18px}
+    #overlay p{margin:0 0 6px 0;font-size:13px;color:#cbd5e1}
+    #overlay select,#overlay button{margin-top:10px;display:block}
+    #startButton{background:#00a3ff;color:#06121a;border:none;padding:8px 12px;border-radius:8px;cursor:pointer;font-weight:600}
+    #resetButton{background:transparent;color:#00a3ff;border:1px solid #00a3ff;padding:8px 12px;border-radius:8px;cursor:pointer}
+    #maxFlowValue{margin-top:12px;font-size:1.05em;color:#9ef08a;min-height:22px}
+    #statusText{font-size:13px;color:#9fe6ff;min-height:18px;margin-bottom:6px}
+    .smallNote{font-size:12px;color:#9fb8d9;margin-top:8px}
+    #controls{margin-top:8px;display:flex;gap:8px;flex-wrap:wrap}
+    .toggle{display:flex;align-items:center;gap:8px;margin-top:8px}
+  </style>
+</head>
+<body>
+  <canvas id="webgl-canvas"></canvas>
+
+  <div id="overlay">
+    <h1>Max Flow Visualizer</h1>
+    <p id="statusText">Welcome! Select Source (S) and Sink (T).</p>
+    <p style="font-size:13px;color:#cbd5e1;margin-bottom:8px">Click nodes to set S/T. Click edges to set capacities.</p>
+
+    <label>Algorithm:</label>
+    <select id="algorithmSelect">
+      <option value="edmonds-karp" selected>Edmonds–Karp (Practical)</option>
+      <option value="capacity-scaling">Capacity Scaling</option>
+    </select>
+
+    <div id="controls">
+      <button id="startButton">Start Algorithm</button>
+      <button id="resetButton">Reset</button>
+    </div>
+
+    <div class="toggle"><input type="checkbox" id="showArrows" checked><label for="showArrows">Show Flow Arrows</label></div>
+    <div class="toggle"><input type="checkbox" id="showParticles" checked><label for="showParticles">Show Particles</label></div>
+
+    <div id="maxFlowValue"></div>
+  </div>
+
+  <script type="importmap">
+  {"imports":{"three":"https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.128.0/examples/jsm/"}}
+  </script>
+
+  <script type="module">
+  import * as THREE from 'three';
+  import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+  // ---------------- CONFIG ----------------
+  const GRID_ROWS = 6, GRID_COLS = 6, GRID_SPACING = 1.0;
+  const ANIM_DELAY_MS = 260;
+
+  // ---------------- GLOBALS ----------------
+  let scene, camera, renderer, controls;
+  let raycaster, mouse;
+  let dots = [], primalEdges = [], primalEdgeLookup = {}, primalEdgeCapacities = {};
+  let primalEdgeDirections = {}; // NEW: edge direction for capacity scaling (1 or -1)
+  let edgeDirectionArrows = []; // NEW: arrow meshes showing edge directions
+  let potentialSurface = null;
+  let sourceNode = null, sinkNode = null;
+
+  // shader surface uniforms
+  const surfaceUniforms = {
+    u_time: { value: 0 },
+    u_breath: { value: 0 },
+    u_rippleCenter: { value: new THREE.Vector2(10000,10000) },
+    u_rippleTime: { value: -9999 },
+    u_rippleStrength: { value: 0.0 },
+    u_scale: { value: 1.0 }
+  };
+
+  // particles & arrows
+  let flowParticles = [];
+  let currentNodesMapForParticles = null;
+  const FLOW_PARTICLE_RADIUS = 0.05;
+  const FLOW_PARTICLE_COLOR = 0x00ffd5;
+  const EDGE_ARROWS = [];
+  const ARROW_TEMPLATE = { radius: 0.06, height: 0.16, color: 0xfff57a, emissive: 0xffb84d };
+
+  // last built capacity/nodes for arrows
+  window.__lastNodesMap = null;
+  window.__lastCapacity = null;
+
+  // ---------------- INIT ----------------
+  function init(){
+    scene = new THREE.Scene(); scene.background = new THREE.Color(0x07070a);
+    camera = new THREE.PerspectiveCamera(50, window.innerWidth/window.innerHeight, 0.1, 1000);
+    camera.position.set(0,0,9);
+
+    renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('webgl-canvas'), antialias:true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+
+    controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true; controls.autoRotate=true; controls.autoRotateSpeed=0.2;
+
+    const ambient = new THREE.AmbientLight(0xffffff,0.6); scene.add(ambient);
+    const dir = new THREE.DirectionalLight(0xffffff,0.6); dir.position.set(5,5,5); scene.add(dir);
+
+    potentialSurface = createShaderPotentialSurface(GRID_ROWS,GRID_COLS,GRID_SPACING);
+    potentialSurface.position.z = -0.6; potentialSurface.rotation.x = -0.05;
+    scene.add(potentialSurface);
+
+    const primalGrid = createPrimalGrid(GRID_ROWS, GRID_COLS, GRID_SPACING);
+    scene.add(primalGrid);
+
+    raycaster = new THREE.Raycaster(); mouse = new THREE.Vector2();
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('click', onClick);
+
+    document.getElementById('resetButton').addEventListener('click', resetSimulation);
+    document.getElementById('startButton').addEventListener('click', ()=>{
+      const algo = document.getElementById('algorithmSelect').value;
+      if (algo === 'capacity-scaling') runCapacityScalingInteractive();
+      else runEdmondsKarpInteractive();
+    });
+
+    window.addEventListener('resize', onResize);
+    startRenderLoop();
+    resetSimulation();
+  }
+
+  // ---------------- SHADER SURFACE ----------------
+  function createShaderPotentialSurface(rows, cols, spacing){
+    const width = (cols-1)*spacing, height=(rows-1)*spacing;
+    const geom = new THREE.PlaneGeometry(width,height,cols-1,rows-1);
+    const count = geom.attributes.position.count;
+    const heightAttr = new Float32Array(count);
+    geom.setAttribute('height', new THREE.BufferAttribute(heightAttr,1));
+
+    const vertexShader = `
+      varying float vHeight;
+      varying vec2 vUv;
+      uniform float u_time, u_breath, u_rippleTime, u_rippleStrength;
+      uniform vec2 u_rippleCenter;
+      attribute float height;
+      void main(){
+        vUv=uv;
+        float breathe = sin(u_time*0.8)*0.08*u_breath;
+        float ripple=0.0;
+        vec2 wp = position.xy;
+        float d = distance(wp,u_rippleCenter);
+        if(u_rippleTime>-900.0){
+          float t=u_time-u_rippleTime;
+          ripple = sin(15.0*(d-0.35*t)) * exp(-2.0*(d+0.1*t)) * u_rippleStrength;
+        }
+        vHeight = height*1.2 + breathe + ripple;
+        vec3 newPos = position + vec3(0,0,vHeight);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(newPos,1.0);
+      }`;
+
+    const fragmentShader = `
+      varying float vHeight;
+      vec3 cmap(float h){
+        if(h<=0.05) return mix(vec3(0.03,0.08,0.25), vec3(0.06,0.18,0.35), h/0.05);
+        if(h<=0.25) return mix(vec3(0.06,0.18,0.35), vec3(0.05,0.6,0.4), (h-0.05)/0.2);
+        if(h<=0.6) return mix(vec3(0.05,0.6,0.4), vec3(0.95,0.86,0.25), (h-0.25)/0.35);
+        return mix(vec3(0.95,0.86,0.25), vec3(0.9,0.2,0.08), clamp((h-0.6)/0.4,0.0,1.0));
+      }
+      void main(){
+        float h = clamp(vHeight,0.0,1.2);
+        gl_FragColor = vec4(cmap(h), 0.95);
+      }`;
+
+    const mat = new THREE.ShaderMaterial({ vertexShader, fragmentShader, uniforms: surfaceUniforms, side:THREE.DoubleSide });
+    return new THREE.Mesh(geom,mat);
+  }
+
+  // ---------------- PRIMAL GRID ----------------
+  function createPrimalGrid(rows, cols, spacing){
+    const group = new THREE.Group(); primalEdges=[]; primalEdgeLookup={}; dots=[];
+    const dotGeom = new THREE.SphereGeometry(0.08,16,16);
+    const dotMat = new THREE.MeshStandardMaterial({color:0x0b66ff});
+    const lineMat = new THREE.LineBasicMaterial({color:0x5c8aff});
+
+    const nodes={}; const ox=((cols-1)*spacing)/2, oy=((rows-1)*spacing)/2;
+    for(let i=0;i<rows;i++) for(let j=0;j<cols;j++){
+      const x=j*spacing-ox, y=-i*spacing+oy;
+      const m=new THREE.Mesh(dotGeom,dotMat.clone()); m.position.set(x,y,0);
+      m.userData.indices={i,j}; dots.push(m); group.add(m); nodes[`${i},${j}`]=m;
+    }
+
+    for(let i=0;i<rows;i++) for(let j=0;j<cols;j++){
+      const s=nodes[`${i},${j}`];
+      if(j+1<cols){ const e=nodes[`${i},${j+1}`]; const ln=new THREE.Line(new THREE.BufferGeometry().setFromPoints([s.position,e.position]), lineMat.clone()); ln.name=`primal-h-${i}-${j}`; group.add(ln); primalEdges.push(ln); }
+      if(i+1<rows){ const e=nodes[`${i+1},${j}`]; const ln=new THREE.Line(new THREE.BufferGeometry().setFromPoints([s.position,e.position]), lineMat.clone()); ln.name=`primal-v-${i}-${j}`; group.add(ln); primalEdges.push(ln); }
+    }
+    return group;
+  }
+
+  // ---------------- INTERACTION ----------------
+  function onMouseMove(e){ const r=renderer.domElement.getBoundingClientRect(); mouse.x=((e.clientX-r.left)/r.width)*2-1; mouse.y=-((e.clientY-r.top)/r.height)*2+1; }
+
+  function onClick(e){
+    const r=renderer.domElement.getBoundingClientRect();
+    const x=((e.clientX-r.left)/r.width)*2-1, y=-((e.clientY-r.top)/r.height)*2+1;
+    const rc=new THREE.Raycaster(); rc.setFromCamera({x,y},camera); rc.params.Line.threshold=0.1;
+
+    const nh = rc.intersectObjects(dots);
+    if(nh.length>0){
+      const d = nh[0].object;
+      controls.autoRotate = false;
+      if(!sourceNode){ sourceNode = d; d.material.color.set(0x00ff66); updateStatusText('Source selected. Choose sink.'); return; }
+      if(!sinkNode && d !== sourceNode){ sinkNode = d; d.material.color.set(0xff4b4b); updateStatusText('Sink selected.'); return; }
+      return;
+    }
+
+    const eh = rc.intersectObjects(primalEdges);
+    if(eh.length===0) return;
+    const edge = eh[0].object;
+    const prev = primalEdgeCapacities[edge.name];
+    const defaultVal = (prev !== undefined) ? prev : 1;
+    const val = prompt('Set edge capacity (>=0). Default 1:', String(defaultVal)); if(val === null) return;
+    const p = parseFloat(val); const cap = (Number.isFinite(p) && p >= 0) ? p : 1;
+    
+    // Always store the capacity value (even if it's 1)
+    primalEdgeCapacities[edge.name] = cap;
+    
+    // NEW: Ask for direction for capacity scaling (only if capacity > 0)
+    if (cap > 0) {
+      const parts = edge.name.split('-'); const type = parts[1];
+      let dirPrompt = '';
+      if (type === 'h') dirPrompt = 'Set direction: 1 for left→right, -1 for right→left';
+      else dirPrompt = 'Set direction: 1 for top→bottom, -1 for bottom→top';
+      const dirVal = prompt(dirPrompt, String(primalEdgeDirections[edge.name] || 1));
+      if (dirVal !== null) {
+        const dir = parseInt(dirVal, 10);
+        primalEdgeDirections[edge.name] = (dir === -1) ? -1 : 1;
+        updateEdgeDirectionArrow(edge);
+      }
+    } else {
+      // Capacity is 0, remove any existing direction arrow
+      const existingIdx = edgeDirectionArrows.findIndex(a => a.userData.edgeName === edge.name);
+      if (existingIdx >= 0) {
+        try {
+          scene.remove(edgeDirectionArrows[existingIdx]);
+          edgeDirectionArrows[existingIdx].geometry.dispose();
+          edgeDirectionArrows[existingIdx].material.dispose();
+        } catch(e) {}
+        edgeDirectionArrows.splice(existingIdx, 1);
+      }
+      // Optionally clear the direction from storage
+      delete primalEdgeDirections[edge.name];
+    }
+    
+    edge.material = new THREE.LineBasicMaterial({ color: cap>1 ? 0xff6b6b : 0x5c8aff });
+    edge.material.needsUpdate = true;
+  }
+
+  function updateStatusText(t){ const el = document.getElementById('statusText'); if(el) el.textContent = t; }
+  function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
+
+  function resetSimulation(){
+    sourceNode = null; sinkNode = null; primalEdgeCapacities = {}; primalEdgeDirections = {};
+    primalEdges.forEach(e => e.material = new THREE.LineBasicMaterial({ color: 0x5c8aff }));
+    dots.forEach(d => d.material.color.set(0x0b66ff));
+    // clear arrows & particles
+    for (const entry of EDGE_ARROWS) {
+      for (const a of entry.arrowPool) {
+        try { scene.remove(a.mesh); a.mesh.geometry.dispose(); a.mesh.material.dispose(); } catch(e) {}
+      }
+    }
+    EDGE_ARROWS.length = 0;
+    for (const p of flowParticles) { try { scene.remove(p.mesh); p.mesh.geometry.dispose(); p.mesh.material.dispose(); } catch(e) {} }
+    flowParticles.length = 0;
+    // NEW: clear edge direction arrows
+    for (const arr of edgeDirectionArrows) {
+      try { scene.remove(arr); arr.geometry.dispose(); arr.material.dispose(); } catch(e) {}
+    }
+    edgeDirectionArrows.length = 0;
+    // NEW: clear edge labels
+    clearEdgeLabels();
+    window.__lastNodesMap = null; window.__lastCapacity = null;
+    document.getElementById('maxFlowValue').textContent = '';
+    updateStatusText('Welcome! Select Source (S) and Sink (T).');
+    // reset surface heights
+    if (potentialSurface && potentialSurface.geometry && potentialSurface.geometry.attributes.height) {
+      const h = potentialSurface.geometry.attributes.height;
+      for (let i = 0; i < h.count; i++) h.setX(i, 0.0);
+      h.needsUpdate = true;
+      potentialSurface.geometry.computeVertexNormals();
+    }
+  }
+
+  // ---------------- BUILD PRIMAL GRAPH ----------------
+  function buildPrimalGraphForFlow(){
+    const nodesMap = {}; let idx = 0;
+    dots.forEach(d => { const {i,j} = d.userData.indices; nodesMap[`${i},${j}`] = idx++; });
+    const n = idx;
+    const capacity = Array.from({length:n}, ()=>Array(n).fill(0));
+    const adj = Array.from({length:n}, ()=>new Set());
+
+    primalEdges.forEach(edge => {
+      if (!edge.name) return;
+      const parts = edge.name.split('-'); const type = parts[1];
+      const r = parseInt(parts[2],10), c = parseInt(parts[3],10);
+      let aKey, bKey;
+      if (type === 'h') { aKey = `${r},${c}`; bKey = `${r},${c+1}`; }
+      else { aKey = `${r},${c}`; bKey = `${r+1},${c}`; }
+      const u = nodesMap[aKey], v = nodesMap[bKey];
+      if (u === undefined || v === undefined) return;
+      // For Edmonds-Karp: use stored capacity if exists, otherwise default to 1
+      const cap = (primalEdgeCapacities[edge.name] !== undefined) ? primalEdgeCapacities[edge.name] : 1;
+      
+      // NEW: For Edmonds-Karp, respect edge direction
+      // Default: horizontal edges go left→right (dir=1), vertical edges go top→bottom (dir=1)
+      const dir = primalEdgeDirections[edge.name] || 1;
+      
+      if (dir === 1) {
+        // Forward direction: u→v
+        capacity[u][v] += cap;
+      } else {
+        // Reverse direction: v→u
+        capacity[v][u] += cap;
+      }
+      
+      adj[u].add(v); adj[v].add(u);
+    });
+
+    window.__lastNodesMap = nodesMap;
+    window.__lastCapacity = capacity;
+    return { nodesMap, capacity, adj, n };
+  }
+
+  // ---------------- EDGE VISUALS ----------------
+  function updateEdgeVisualsFromCapacity(nodesMap, cap){
+    primalEdges.forEach(edge => {
+      if (!edge.name) return;
+      const parts = edge.name.split('-'); const type = parts[1];
+      const r = parseInt(parts[2],10), c = parseInt(parts[3],10);
+      let aKey, bKey;
+      if (type === 'h') { aKey = `${r},${c}`; bKey = `${r},${c+1}`; }
+      else { aKey = `${r},${c}`; bKey = `${r+1},${c}`; }
+      const u = nodesMap[aKey], v = nodesMap[bKey];
+      if (u === undefined || v === undefined) return;
+
+      const forward = (cap[u] && cap[u][v]) ? cap[u][v] : 0;
+      const backward = (cap[v] && cap[v][u]) ? cap[v][u] : 0;
+      const total = forward + backward;
+      const originalCap = (primalEdgeCapacities[edge.name] || 1);
+
+      const col =
+        total <= 0 ? 0x8b0000 :
+        total < originalCap ? 0xff8c00 :
+        total === originalCap ? 0x5c8aff :
+        0x3af0a8;
+
+      edge.material = new THREE.LineBasicMaterial({ color: col });
+      edge.material.needsUpdate = true;
+
+      // update arrows
+      ensureArrowEntryForEdge(edge, forward - backward, total);
+    });
+  }
+
+  // ---------------- BFS / Edmonds-Karp ----------------
+  function bfsResidual(capacity, adj, s, t, parent){
+    parent.fill(-1); parent[s] = -2;
+    const q = [s]; let head = 0;
+    while (head < q.length) {
+      const u = q[head++];
+      for (const v of adj[u]) {
+        if (parent[v] === -1 && capacity[u][v] > 0) {
+          parent[v] = u;
+          if (v === t) return true;
+          q.push(v);
+        }
+      }
+    }
+    return false;
+  }
+
+  async function animateBFSExploration(nodesMap, parentSnapshot){
+    for (let k = 0; k < parentSnapshot.length; k++) {
+      if (parentSnapshot[k] !== -1) {
+        const dot = getDotByIndex(nodesMap, k);
+        if (dot && dot !== sourceNode && dot !== sinkNode) dot.material.color.set(0xffb86b);
+      }
+    }
+    await sleep(ANIM_DELAY_MS);
+    dots.forEach(d => { if (d !== sourceNode && d !== sinkNode) d.material.color.set(0x0b66ff); });
+  }
+
+  function getDotByIndex(nodesMap, index){
+    const foundKey = Object.keys(nodesMap).find(k => nodesMap[k] === index);
+    if (!foundKey) return null;
+    const [i,j] = foundKey.split(',').map(Number);
+    return dots.find(d => d.userData.indices.i === i && d.userData.indices.j === j);
+  }
+
+  function findPrimalEdgeBetweenPoints(dotA, dotB){
+    if (!dotA || !dotB) return null;
+    for (const edge of primalEdges) {
+      try {
+        const pos = edge.geometry.attributes.position;
+        const ax = pos.getX(0), ay = pos.getY(0);
+        const bx = pos.getX(1), by = pos.getY(1);
+        const da = Math.hypot(ax - dotA.position.x, ay - dotA.position.y) + Math.hypot(bx - dotB.position.x, by - dotB.position.y);
+        const db = Math.hypot(ax - dotB.position.x, ay - dotB.position.y) + Math.hypot(bx - dotA.position.x, by - dotA.position.y);
+        if (Math.min(da, db) < 0.001) return edge;
+      } catch (e) { /* ignore */ }
+    }
+    return null;
+  }
+
+  // ---------------- FLOW PARTICLES ----------------
+  function makeFlowParticleMesh() {
+    const geom = new THREE.SphereGeometry(FLOW_PARTICLE_RADIUS, 8, 8);
+    const mat = new THREE.MeshStandardMaterial({
+      color: FLOW_PARTICLE_COLOR,
+      emissive: FLOW_PARTICLE_COLOR,
+      emissiveIntensity: 0.9,
+      metalness: 0.2,
+      roughness: 0.4,
+      transparent: true,
+      opacity: 0.0
+    });
+    const mesh = new THREE.Mesh(geom, mat);
+    mesh.frustumCulled = false;
+    return mesh;
+  }
+
+  function spawnFlowParticlesForPath(pathNodes, speed = 1.6) {
+    if (!currentNodesMapForParticles) return;
+    for (const [u, v] of pathNodes) {
+      const uDot = getDotByIndex(currentNodesMapForParticles, u);
+      const vDot = getDotByIndex(currentNodesMapForParticles, v);
+      if (!uDot || !vDot) continue;
+      const start = uDot.position.clone();
+      const end = vDot.position.clone();
+
+      for (let k = 0; k < 2; k++) {
+        const mesh = makeFlowParticleMesh();
+        mesh.position.copy(start);
+        scene.add(mesh);
+
+        flowParticles.push({
+          mesh,
+          start,
+          end,
+          t: k === 0 ? 0.0 : -0.25,
+          speed
+        });
+      }
+    }
+  }
+
+  function updateAndAnimateFlowParticles(dt) {
+    const showParticles = document.getElementById('showParticles')?.checked ?? true;
+    for (let i = flowParticles.length - 1; i >= 0; i--) {
+      const p = flowParticles[i];
+      p.t += dt * p.speed;
+      if (p.t < 0) {
+        p.mesh.position.copy(p.start);
+        continue;
+      }
+      const prog = Math.min(1.0, p.t);
+      p.mesh.position.lerpVectors(p.start, p.end, prog);
+      const mat = p.mesh.material;
+      if (prog < 0.12) mat.opacity = prog / 0.12;
+      else if (prog > 0.88) mat.opacity = Math.max(0, (1.0 - prog) / 0.12);
+      else mat.opacity = 1.0;
+      mat.transparent = mat.opacity < 1.0;
+
+      if (!showParticles) mat.opacity = 0.0;
+
+      if (prog >= 1.0) {
+        scene.remove(p.mesh);
+        try { p.mesh.geometry.dispose(); p.mesh.material.dispose(); } catch (e) {}
+        flowParticles.splice(i, 1);
+      }
+    }
+  }
+
+  // ---------------- ARROW SYSTEM ----------------
+  function makeArrowMesh() {
+    const geom = new THREE.ConeGeometry(ARROW_TEMPLATE.radius, ARROW_TEMPLATE.height, 12, 1);
+    geom.translate(0, -ARROW_TEMPLATE.height/2, 0);
+    const mat = new THREE.MeshStandardMaterial({
+      color: ARROW_TEMPLATE.color,
+      emissive: ARROW_TEMPLATE.emissive,
+      emissiveIntensity: 1.0,
+      metalness: 0.1,
+      roughness: 0.3,
+      transparent: true,
+      opacity: 0.95
+    });
+    const mesh = new THREE.Mesh(geom, mat);
+    mesh.frustumCulled = false;
+    return mesh;
+  }
+
+  function ensureArrowEntryForEdge(edge, flowDirectionValue, totalFlow) {
+    const showArrows = document.getElementById('showArrows')?.checked ?? true;
+    const existing = EDGE_ARROWS.find(e => e.edge === edge);
+    if (!showArrows) {
+      if (existing) {
+        for (const a of existing.arrowPool) { try { scene.remove(a.mesh); a.mesh.geometry.dispose(); a.mesh.material.dispose(); } catch(e){} }
+        EDGE_ARROWS.splice(EDGE_ARROWS.indexOf(existing), 1);
+      }
+      return;
+    }
+    if (!existing) {
+      const pool = [];
+      const arrowCount = Math.min(6, Math.max(1, Math.round(totalFlow)));
+      for (let i = 0; i < arrowCount; i++) {
+        const mesh = makeArrowMesh();
+        mesh.visible = true;
+        scene.add(mesh);
+        pool.push({ mesh, offset: Math.random() });
+      }
+      EDGE_ARROWS.push({ edge, arrowPool: pool, speed: 0.5 + Math.min(3, totalFlow), intensity: totalFlow });
+    } else {
+      const desired = Math.min(8, Math.max(1, Math.round(totalFlow)));
+      const pool = existing.arrowPool;
+      if (pool.length < desired) {
+        for (let k = pool.length; k < desired; k++) { const mesh = makeArrowMesh(); scene.add(mesh); pool.push({ mesh, offset: Math.random() }); }
+      } else if (pool.length > desired) {
+        for (let k = pool.length - 1; k >= desired; k--) { const a = pool[k]; try { scene.remove(a.mesh); a.mesh.geometry.dispose(); a.mesh.material.dispose(); } catch(e) { } pool.splice(k,1); }
+      }
+      existing.speed = 0.6 + Math.min(3, totalFlow);
+      existing.intensity = totalFlow;
+    }
+  }
+
+  function orientMeshToDirection(mesh, dir) {
+    const up = new THREE.Vector3(0,-1,0);
+    const quaternion = new THREE.Quaternion().setFromUnitVectors(up, dir.clone().normalize());
+    mesh.quaternion.copy(quaternion);
+  }
+
+  function updateArrowStreams(dt, nodesMap, capacity) {
+    const showArrows = document.getElementById('showArrows')?.checked ?? true;
+    if (!showArrows) return;
+    for (const entry of EDGE_ARROWS) {
+      const edge = entry.edge;
+      const pos = edge.geometry.attributes.position;
+      const aPos = new THREE.Vector3(pos.getX(0), pos.getY(0), 0);
+      const bPos = new THREE.Vector3(pos.getX(1), pos.getY(1), 0);
+
+      const parts = edge.name.split('-'); const type = parts[1];
+      const r = parseInt(parts[2],10), c = parseInt(parts[3],10);
+      let aKey,bKey;
+      if (type === 'h') { aKey = `${r},${c}`; bKey = `${r},${c+1}`; } else { aKey = `${r},${c}`; bKey = `${r+1},${c}`; }
+      const u = nodesMap[aKey], v = nodesMap[bKey];
+      const forward = (capacity[u] && capacity[u][v]) ? capacity[u][v] : 0;
+      const backward = (capacity[v] && capacity[v][u]) ? capacity[v][u] : 0;
+      const net = forward - backward;
+      const total = forward + backward;
+
+      const dir = new THREE.Vector3().subVectors(bPos, aPos); const length = dir.length(); if (length < 1e-6) continue;
+      dir.normalize();
+
+      for (let i = 0; i < entry.arrowPool.length; i++) {
+        const a = entry.arrowPool[i];
+        a.offset = (a.offset + dt * entry.speed * (0.8 + 0.6 * Math.abs(net))) % 1.0;
+        let t = a.offset;
+        const directionSign = net >= 0 ? 1 : -1;
+        if (directionSign >= 0) {
+          const worldPos = new THREE.Vector3().lerpVectors(aPos, bPos, t);
+          a.mesh.position.copy(worldPos);
+          orientMeshToDirection(a.mesh, dir);
+        } else {
+          const worldPos = new THREE.Vector3().lerpVectors(bPos, aPos, t);
+          a.mesh.position.copy(worldPos);
+          orientMeshToDirection(a.mesh, dir.clone().negate());
+        }
+        const scale = 0.6 + Math.min(2.0, total * 0.2);
+        a.mesh.scale.setScalar(scale);
+        const pulse = 0.6 + 0.4 * Math.sin((performance.now()/300.0) + i);
+        a.mesh.material.emissiveIntensity = Math.min(3.5, pulse * (1.0 + total * 0.5));
+        a.mesh.material.opacity = 0.9;
+      }
+    }
+  }
+
+  // ---------------- RENDER / LOOP ----------------
+  function onResize(){ camera.aspect = window.innerWidth/window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); }
+
+  function startRenderLoop(){
+    let lastFrame = performance.now();
+    (function loop(){
+      const now = performance.now();
+      const dt = (now - lastFrame) / 1000;
+      lastFrame = now;
+      surfaceUniforms.u_time.value = now * 0.001;
+      updateAndAnimateFlowParticles(dt);
+      if (window.__lastNodesMap && window.__lastCapacity) updateArrowStreams(dt, window.__lastNodesMap, window.__lastCapacity);
+      controls.update();
+      renderer.render(scene, camera);
+      requestAnimationFrame(loop);
+    })();
+  }
+
+  // ---------------- EDMONDS-KARP (unchanged core) ----------------
+  async function runEdmondsKarpInteractive(){
+    if (!sourceNode || !sinkNode){ updateStatusText('Select S and T first'); return; }
+
+    // NEW: Show direction arrows for Edmonds-Karp
+    primalEdges.forEach(edge => {
+      if (edge.name) {
+        const edgeCap = (primalEdgeCapacities[edge.name] !== undefined) ? primalEdgeCapacities[edge.name] : 1;
+        if (edgeCap > 0) {
+          // Ensure direction is set (use default if not set by user)
+          if (primalEdgeDirections[edge.name] === undefined) {
+            primalEdgeDirections[edge.name] = 1; // Default direction
+          }
+          updateEdgeDirectionArrow(edge);
+        }
+      }
+    });
+
+    const { nodesMap, capacity, adj, n } = buildPrimalGraphForFlow();
+    const sKey = `${sourceNode.userData.indices.i},${sourceNode.userData.indices.j}`;
+    const tKey = `${sinkNode.userData.indices.i},${sinkNode.userData.indices.j}`;
+    const s = nodesMap[sKey], t = nodesMap[tKey];
+    if (s === undefined || t === undefined){ updateStatusText('Error mapping source/sink to grid indices.'); return; }
+
+    const adjArr = adj.map(x => Array.from(x));
+    let parent = new Array(n).fill(-1);
+    let maxFlow = 0;
+    const cap = capacity;
+
+    while (true) {
+      const found = bfsResidual(cap, adjArr, s, t, parent);
+      await animateBFSExploration(nodesMap, parent.slice());
+      if (!found) break;
+
+      let path_flow = Infinity;
+      let v = t;
+      const pathNodes = [];
+      while (v !== s) {
+        const u = parent[v];
+        path_flow = Math.min(path_flow, cap[u][v]);
+        pathNodes.push([u, v]);
+        v = u;
+      }
+
+      // highlight path
+      for (const [u, v] of pathNodes) {
+        const ud = getDotByIndex(nodesMap, u);
+        const vd = getDotByIndex(nodesMap, v);
+        const candidateEdge = findPrimalEdgeBetweenPoints(ud, vd);
+        if (candidateEdge) candidateEdge.material = new THREE.LineBasicMaterial({ color: 0x19ff8a });
+      }
+
+      // spawn particles
+      currentNodesMapForParticles = nodesMap;
+      spawnFlowParticlesForPath(pathNodes);
+
+      // pause
+      await sleep(ANIM_DELAY_MS);
+
+      // update residual capacities
+      v = t;
+      while (v !== s) {
+        const u = parent[v];
+        cap[u][v] -= path_flow;
+        cap[v][u] += path_flow;
+        v = u;
+      }
+      maxFlow += path_flow;
+
+      // update visuals
+      updateEdgeVisualsFromCapacity(nodesMap, cap);
+      updateFlowIntensitySurface(potentialSurface, nodesMap, cap);
+      await sleep(ANIM_DELAY_MS);
+    }
+
+    document.getElementById('maxFlowValue').textContent = `Max Flow: ${maxFlow}`;
+    updateStatusText('Edmonds–Karp complete.');
+
+    // highlight min-cut
+    try {
+      const reachable = computeReachableInResidual(cap, s);
+      highlightMinCutEdges(reachable, nodesMap);
+    } catch (e) { console.warn('min-cut failed', e); }
+  }
+
+  function computeReachableInResidual(capacity, sIndex) {
+    const n = capacity.length;
+    const vis = new Array(n).fill(false);
+    const q = [sIndex]; vis[sIndex] = true;
+    while (q.length) {
+      const u = q.shift();
+      for (let v = 0; v < n; v++) {
+        if (!vis[v] && capacity[u][v] > 0) { vis[v] = true; q.push(v); }
+      }
+    }
+    return vis;
+  }
+
+  function highlightMinCutEdges(reachable, nodesMap) {
+    for (const edge of primalEdges) {
+      if (!edge.name) continue;
+      const parts = edge.name.split('-'); const type = parts[1];
+      const r = parseInt(parts[2],10), c = parseInt(parts[3],10);
+      let aKey, bKey;
+      if (type === 'h') { aKey = `${r},${c}`; bKey = `${r},${c+1}`; }
+      else { aKey = `${r},${c}`; bKey = `${r+1},${c}`; }
+      const u = nodesMap[aKey], v = nodesMap[bKey];
+      if (u === undefined || v === undefined) continue;
+      const crosses = (reachable[u] && !reachable[v]) || (!reachable[u] && reachable[v]);
+      if (crosses) {
+        edge.material = new THREE.LineBasicMaterial({ color: 0xffa500 });
+      }
+    }
+  }
+
+  // ---------------- FLOW INTENSITY SURFACE UPDATE ----------------
+  function updateFlowIntensitySurface(surface, nodesMap, capacity){
+    if (!surface || !surface.geometry || !surface.geometry.attributes.height) return;
+    const heightAttr = surface.geometry.attributes.height, posAttr = surface.geometry.attributes.position;
+    const N = heightAttr.count;
+    for (let vi = 0; vi < N; vi++){
+      const px = posAttr.getX(vi), py = posAttr.getY(vi);
+      let closest = null, best = 1e9;
+      for (const d of dots) {
+        const dd = Math.hypot(d.position.x - px, d.position.y - py);
+        if (dd < best) { best = dd; closest = d; }
+      }
+      if (!closest) { heightAttr.setX(vi, 0.0); continue; }
+      const { i:ri, j:rj } = closest.userData.indices;
+      const idx = nodesMap[`${ri},${rj}`];
+      if (idx === undefined) { heightAttr.setX(vi, 0.0); continue; }
+      let intensity = 0;
+      for (let k = 0; k < capacity.length; k++) if (capacity[idx][k] > 0) intensity += capacity[idx][k];
+      heightAttr.setX(vi, Math.min(1.0, intensity * 0.22));
+    }
+    heightAttr.needsUpdate = true;
+    surface.geometry.computeVertexNormals();
+    // ripple heat
+    let cx=0, cy=0, count=0;
+    for (const d of dots){
+      const {i,j} = d.userData.indices; const id = nodesMap[`${i},${j}`]; if (id===undefined) continue;
+      let s=0; for (let k = 0; k < capacity.length; k++) if (capacity[id][k] > 0) s += capacity[id][k];
+      if (s > 1.5) { cx += d.position.x; cy += d.position.y; count++; }
+    }
+    if (count > 0) {
+      cx /= count; cy /= count;
+      surfaceUniforms.u_rippleCenter.value.set(cx, cy);
+      surfaceUniforms.u_rippleTime.value = surfaceUniforms.u_time.value;
+      surfaceUniforms.u_rippleStrength.value = 0.9;
+    }
+  }
+
+  // ---------------- UTILITIES ----------------
+  function findPrimalEdgeByMidpoint(mid){
+    let best=null, bd=Infinity;
+    for (const e of primalEdges){
+      try{
+        const p = e.geometry.attributes.position;
+        const ax = p.getX(0), ay = p.getY(0), bx = p.getX(1), by = p.getY(1);
+        const mx = (ax+bx)/2, my = (ay+by)/2;
+        const d = Math.hypot(mx-mid.x, my-mid.y);
+        if (d < bd){ bd = d; best = e; }
+      }catch(e){}
+    }
+    return best;
+  }
+
+  // ============================================================================
+  // NEW: CAPACITY SCALING ALGORITHM VISUALIZATION
+  // ============================================================================
+
+  // NEW: Edge label storage (CSS text overlays)
+  let edgeLabelElements = [];
+
+  // NEW: Create/update edge direction arrow for a given edge
+  function updateEdgeDirectionArrow(edge) {
+    // Remove existing arrow for this edge
+    const existingIdx = edgeDirectionArrows.findIndex(a => a.userData.edgeName === edge.name);
+    if (existingIdx >= 0) {
+      try {
+        scene.remove(edgeDirectionArrows[existingIdx]);
+        edgeDirectionArrows[existingIdx].geometry.dispose();
+        edgeDirectionArrows[existingIdx].material.dispose();
+      } catch(e) {}
+      edgeDirectionArrows.splice(existingIdx, 1);
+    }
+
+    const dir = primalEdgeDirections[edge.name] || 1;
+    const pos = edge.geometry.attributes.position;
+    const ax = pos.getX(0), ay = pos.getY(0);
+    const bx = pos.getX(1), by = pos.getY(1);
+
+    // Compute midpoint and direction vector
+    // INVERTED: Show arrow in opposite direction
+    let startX, startY, endX, endY;
+    if (dir === 1) {
+      // Direction is 1, but show arrow pointing backwards
+      startX = bx; startY = by; endX = ax; endY = ay;
+    } else {
+      // Direction is -1, but show arrow pointing backwards (so forward)
+      startX = ax; startY = ay; endX = bx; endY = by;
+    }
+
+    const mx = (startX + endX) / 2;
+    const my = (startY + endY) / 2;
+    const dx = endX - startX, dy = endY - startY;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-6) return;
+
+    // Create small arrow cone
+    const arrowGeom = new THREE.ConeGeometry(0.06, 0.14, 8, 1);
+    arrowGeom.translate(0, -0.07, 0);
+    const arrowMat = new THREE.MeshBasicMaterial({ color: 0xffdd00, transparent: true, opacity: 0.8 });
+    const arrowMesh = new THREE.Mesh(arrowGeom, arrowMat);
+    arrowMesh.position.set(mx, my, 0.05);
+
+    // Orient arrow
+    const dirVec = new THREE.Vector3(dx / len, dy / len, 0);
+    const up = new THREE.Vector3(0, -1, 0);
+    const quaternion = new THREE.Quaternion().setFromUnitVectors(up, dirVec);
+    arrowMesh.quaternion.copy(quaternion);
+
+    arrowMesh.userData.edgeName = edge.name;
+    scene.add(arrowMesh);
+    edgeDirectionArrows.push(arrowMesh);
+  }
+
+  // NEW: Clear all edge labels (HTML overlays)
+  function clearEdgeLabels() {
+    for (const el of edgeLabelElements) {
+      try { document.body.removeChild(el); } catch(e) {}
+    }
+    edgeLabelElements.length = 0;
+  }
+
+  // NEW: Update edge labels showing capacity:flow
+  function updateEdgeLabelsCapacityScaling(nodesMap, capacity, originalCapacities) {
+    clearEdgeLabels();
+
+    primalEdges.forEach(edge => {
+      if (!edge.name) return;
+      const parts = edge.name.split('-');
+      const type = parts[1];
+      const r = parseInt(parts[2], 10), c = parseInt(parts[3], 10);
+      let aKey, bKey;
+      if (type === 'h') { aKey = `${r},${c}`; bKey = `${r},${c+1}`; }
+      else { aKey = `${r},${c}`; bKey = `${r+1},${c}`; }
+      const u = nodesMap[aKey], v = nodesMap[bKey];
+      if (u === undefined || v === undefined) return;
+
+      const dir = primalEdgeDirections[edge.name] || 1;
+      let srcIdx, dstIdx;
+      if (dir === 1) { srcIdx = u; dstIdx = v; }
+      else { srcIdx = v; dstIdx = u; }
+
+      const originalCap = originalCapacities[edge.name] || 0;
+      const currentFlow = (capacity[dstIdx] && capacity[dstIdx][srcIdx]) ? capacity[dstIdx][srcIdx] : 0;
+
+      // Get edge midpoint in 3D
+      const pos = edge.geometry.attributes.position;
+      const mx = (pos.getX(0) + pos.getX(1)) / 2;
+      const my = (pos.getY(0) + pos.getY(1)) / 2;
+      const worldPos = new THREE.Vector3(mx, my, 0.1);
+
+      // Project to screen
+      const screenPos = worldPos.clone().project(camera);
+      const x = (screenPos.x * 0.5 + 0.5) * window.innerWidth;
+      const y = (-screenPos.y * 0.5 + 0.5) * window.innerHeight;
+
+      // Create HTML label
+      const label = document.createElement('div');
+      label.style.position = 'absolute';
+      label.style.left = `${x}px`;
+      label.style.top = `${y}px`;
+      label.style.transform = 'translate(-50%, -50%)';
+      label.style.color = '#ffeb3b';
+      label.style.fontSize = '11px';
+      label.style.fontWeight = '600';
+      label.style.background = 'rgba(0,0,0,0.7)';
+      label.style.padding = '2px 5px';
+      label.style.borderRadius = '3px';
+      label.style.pointerEvents = 'none';
+      label.style.fontFamily = 'IBM Plex Sans, sans-serif';
+      label.textContent = `${originalCap}:${currentFlow}`;
+      document.body.appendChild(label);
+      edgeLabelElements.push(label);
+    });
+  }
+
+  // NEW: Build directed capacity graph for capacity scaling
+  function buildDirectedCapacityGraph() {
+    const nodesMap = {};
+    let idx = 0;
+    dots.forEach(d => {
+      const { i, j } = d.userData.indices;
+      nodesMap[`${i},${j}`] = idx++;
+    });
+    const n = idx;
+    const capacity = Array.from({ length: n }, () => Array(n).fill(0));
+    const adj = Array.from({ length: n }, () => new Set());
+    const originalCapacities = {};
+
+    primalEdges.forEach(edge => {
+      if (!edge.name) return;
+      const parts = edge.name.split('-');
+      const type = parts[1];
+      const r = parseInt(parts[2], 10), c = parseInt(parts[3], 10);
+      let aKey, bKey;
+      if (type === 'h') { aKey = `${r},${c}`; bKey = `${r},${c+1}`; }
+      else { aKey = `${r},${c}`; bKey = `${r+1},${c}`; }
+      const u = nodesMap[aKey], v = nodesMap[bKey];
+      if (u === undefined || v === undefined) return;
+
+      // For capacity scaling: use explicitly set capacity, default to 0 if not set
+      const cap = (primalEdgeCapacities[edge.name] !== undefined) ? primalEdgeCapacities[edge.name] : 0;
+      originalCapacities[edge.name] = cap;
+
+      // Only add edges with non-zero capacity
+      if (cap <= 0) return;
+
+      const dir = primalEdgeDirections[edge.name] || 1;
+      let src, dst;
+      if (dir === 1) { src = u; dst = v; }
+      else { src = v; dst = u; }
+
+      capacity[src][dst] += cap;
+      adj[src].add(dst);
+      adj[dst].add(src); // for residual
+    });
+
+    return { nodesMap, capacity, adj, n, originalCapacities };
+  }
+
+  // NEW: Delta-restricted BFS for capacity scaling
+  function bfsDeltaRestricted(capacity, adj, s, t, parent, delta) {
+    parent.fill(-1);
+    parent[s] = -2;
+    const q = [s];
+    let head = 0;
+    while (head < q.length) {
+      const u = q[head++];
+      for (const v of adj[u]) {
+        if (parent[v] === -1 && capacity[u][v] >= delta) {
+          parent[v] = u;
+          if (v === t) return true;
+          q.push(v);
+        }
+      }
+    }
+    return false;
+  }
+
+  // NEW: Highlight path edges in bright green with bold lines
+  function highlightPathEdges(pathNodes, nodesMap, color) {
+    for (const [u, v] of pathNodes) {
+      const uDot = getDotByIndex(nodesMap, u);
+      const vDot = getDotByIndex(nodesMap, v);
+      const candidateEdge = findPrimalEdgeBetweenPoints(uDot, vDot);
+      if (candidateEdge) {
+        candidateEdge.material = new THREE.LineBasicMaterial({ color: color, linewidth: 5 });
+        candidateEdge.material.needsUpdate = true;
+      }
+    }
+  }
+
+  // NEW: Reset path edges to normal color
+  function resetPathEdges(pathNodes, nodesMap) {
+    for (const [u, v] of pathNodes) {
+      const uDot = getDotByIndex(nodesMap, u);
+      const vDot = getDotByIndex(nodesMap, v);
+      const candidateEdge = findPrimalEdgeBetweenPoints(uDot, vDot);
+      if (candidateEdge) {
+        const edgeName = candidateEdge.name;
+        const cap = primalEdgeCapacities[edgeName] || 1;
+        candidateEdge.material = new THREE.LineBasicMaterial({ color: cap > 1 ? 0xff6b6b : 0x5c8aff });
+        candidateEdge.material.needsUpdate = true;
+      }
+    }
+  }
+
+  // NEW: Main Capacity Scaling Algorithm
+  async function runCapacityScalingInteractive() {
+    if (!sourceNode || !sinkNode) {
+      updateStatusText('Select S and T first');
+      return;
+    }
+
+    const { nodesMap, capacity, adj, n, originalCapacities } = buildDirectedCapacityGraph();
+    const sKey = `${sourceNode.userData.indices.i},${sourceNode.userData.indices.j}`;
+    const tKey = `${sinkNode.userData.indices.i},${sinkNode.userData.indices.j}`;
+    const s = nodesMap[sKey], t = nodesMap[tKey];
+    if (s === undefined || t === undefined) {
+      updateStatusText('Error mapping source/sink to grid indices.');
+      return;
+    }
+
+    // Show direction arrows only for edges with non-zero capacity
+    primalEdges.forEach(edge => {
+      if (edge.name && primalEdgeDirections[edge.name]) {
+        const edgeCap = (primalEdgeCapacities[edge.name] !== undefined) ? primalEdgeCapacities[edge.name] : 0;
+        if (edgeCap > 0) {
+          updateEdgeDirectionArrow(edge);
+        }
+      }
+    });
+
+    // Compute initial delta = largest power of 2 <= max capacity
+    let maxCap = 0;
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j < n; j++) {
+        if (capacity[i][j] > maxCap) maxCap = capacity[i][j];
+      }
+    }
+    let delta = 1;
+    while (delta * 2 <= maxCap) delta *= 2;
+
+    let maxFlow = 0;
+    let parent = new Array(n).fill(-1);
+    const adjArr = adj.map(x => Array.from(x));
+
+    updateStatusText(`Starting Capacity Scaling with Δ = ${delta}`);
+    await sleep(ANIM_DELAY_MS);
+
+    // Initial label display
+    updateEdgeLabelsCapacityScaling(nodesMap, capacity, originalCapacities);
+
+    while (delta >= 1) {
+      updateStatusText(`Current Δ = ${delta}, searching for augmenting path...`);
+      await sleep(ANIM_DELAY_MS);
+
+      let foundPath = false;
+      while (true) {
+        const found = bfsDeltaRestricted(capacity, adjArr, s, t, parent, delta);
+        if (!found) break;
+
+        foundPath = true;
+
+        // Compute path flow
+        let pathFlow = Infinity;
+        let v = t;
+        const pathNodes = [];
+        while (v !== s) {
+          const u = parent[v];
+          pathFlow = Math.min(pathFlow, capacity[u][v]);
+          pathNodes.push([u, v]);
+          v = u;
+        }
+
+        // Highlight path in bright green
+        highlightPathEdges(pathNodes, nodesMap, 0x19ff8a);
+        updateStatusText(`Augmenting Δ-path found with flow = ${pathFlow}`);
+        
+        // Show augmenting path for 2 seconds
+        await sleep(2000);
+
+        // Update residual capacities
+        v = t;
+        while (v !== s) {
+          const u = parent[v];
+          capacity[u][v] -= pathFlow;
+          capacity[v][u] += pathFlow;
+          v = u;
+        }
+        maxFlow += pathFlow;
+
+        // Update edge labels
+        updateEdgeLabelsCapacityScaling(nodesMap, capacity, originalCapacities);
+        await sleep(ANIM_DELAY_MS);
+
+        // Reset path edges to normal
+        resetPathEdges(pathNodes, nodesMap);
+        await sleep(ANIM_DELAY_MS / 2);
+      }
+
+      if (!foundPath) {
+        updateStatusText(`No Δ-path exists for Δ = ${delta}, halving Δ...`);
+        await sleep(ANIM_DELAY_MS);
+      }
+
+      // Halve delta
+      delta = Math.floor(delta / 2);
+    }
+
+    document.getElementById('maxFlowValue').textContent = `Max Flow: ${maxFlow}`;
+    updateStatusText('Capacity Scaling complete.');
+  }
+
+  // ---------------- BOOT ----------------
+  init();
+  </script>
+</body>
+</html>
